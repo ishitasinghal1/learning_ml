@@ -1,0 +1,116 @@
+# ============================================================
+# HUGGINGFACE SENTIMENT ANALYSIS - Sentiment140 Dataset
+# ============================================================
+# Model used : distilbert-base-uncased-finetuned-sst-2-english
+# - Pre-trained transformer model fine tuned on SST-2 dataset
+# - Returns : POSITIVE or NEGATIVE label with confidence score
+# - No training needed , model is already trained
+#
+# Running on a SAMPLE of 10,000 tweets (5000 positive , 5000 negative)
+# - Keeps it balanced (equal positive and negative)
+# - Runs in ~5-10 minutes on CPU
+# - Still gives a reliable accuracy score
+# ============================================================
+
+# ---STEP 1 : Install if not already installed---
+# Run this in terminal first :
+# pip install transformers torch
+
+# ---STEP 2 : Import Libraries---
+import pandas as pd
+from transformers import pipeline
+from sklearn.metrics import accuracy_score
+import torch
+
+# Check if GPU is available (will speed things up massively)
+device = 0 if torch.cuda.is_available() else -1
+print(f"Using : {'GPU ✓' if device == 0 else 'CPU (no GPU found)'}")
+
+# ---STEP 3 : Load Data--- (same dataset as NLTK model)
+column_names = ['target', 'id', 'date', 'flag', 'user', 'text']
+twitter_data = pd.read_csv(
+    r"C:\Users\LENOVO\Desktop\sentiment_analysis\sentiment140\training.1600000.processed.noemoticon.csv",
+    names=column_names,
+    encoding='ISO-8859-1'
+)
+print("! CSV file loaded !")
+print(twitter_data.shape)
+
+# ---STEP 4 : Convert target 4 => 1 (same as NLTK model)---
+# 0 = negative tweet , 1 = positive tweet
+twitter_data.replace({'target': {4: 1}}, inplace=True)
+
+# ---STEP 5 : Sample 10,000 tweets (5000 positive , 5000 negative)---
+# Keeping it balanced so accuracy score is fair
+# Same way the original dataset was balanced (800K positive , 800K negative)
+SAMPLE_SIZE = 5000   # 5000 from each class , change this if you want more/less
+df_negative = twitter_data[twitter_data['target'] == 0].sample(SAMPLE_SIZE, random_state=2)
+df_positive = twitter_data[twitter_data['target'] == 1].sample(SAMPLE_SIZE, random_state=2)
+twitter_data = pd.concat([df_negative, df_positive]).reset_index(drop=True)
+
+print(f"\nSampled {len(twitter_data)} tweets for HuggingFace evaluation")
+print(twitter_data['target'].value_counts())
+
+# ---STEP 5 : Load HuggingFace Pipeline---
+# distilbert is a lighter/faster version of BERT
+# Downloads model on first run (~250MB) , cached after that
+print("Loading HuggingFace model...")
+sentiment_pipeline = pipeline(
+    "sentiment-analysis",
+    model="distilbert-base-uncased-finetuned-sst-2-english",
+    device=device,
+    truncation=True,    # tweets > 512 tokens will be truncated
+    max_length=512
+)
+print("Model loaded!")
+
+# ---STEP 6 : Predict in Batches---
+# batch_size=64 means 64 tweets processed at a time (faster than 1 by 1)
+# increase batch_size if you have more RAM (e.g 128 , 256)
+
+print("Running HuggingFace on 10,000 tweets...")
+print("Estimated time on CPU : 5-10 minutes")
+print("Progress will be shown every 1,000 tweets...\n")
+
+texts = twitter_data['text'].tolist()
+batch_size = 64
+predictions = []
+
+for i in range(0, len(texts), batch_size):
+    batch = texts[i:i+batch_size]
+    # truncate each tweet to 512 chars to avoid token limit issues
+    batch = [text[:512] for text in batch]
+    results = sentiment_pipeline(batch)
+    # POSITIVE => 1 , NEGATIVE => 0
+    batch_preds = [1 if r['label'] == 'POSITIVE' else 0 for r in results]
+    predictions.extend(batch_preds)
+
+    # Print progress every 1,000 tweets
+    if (i // batch_size) % (1000 // batch_size) == 0:
+        print(f"Processed {i + len(batch):,} / {len(texts):,} tweets")
+
+twitter_data['hf_prediction'] = predictions
+print("\nHuggingFace predictions done!")
+
+# ---STEP 7 : Accuracy Score---
+# No train/test split needed , model is already pre-trained
+# Evaluating directly on full dataset
+hf_accuracy = accuracy_score(twitter_data['target'], twitter_data['hf_prediction'])
+print(f"\nHuggingFace Accuracy Score on 10,000 tweet sample : {hf_accuracy:.4f}")
+
+# ---STEP 8 : Sample Predictions to verify---
+print("\n--- Sample Predictions ---")
+sample = twitter_data[['text', 'target', 'hf_prediction']].sample(10, random_state=2)
+print(sample.to_string())
+
+# ============================================================
+# EXPECTED RESULT :
+# HuggingFace accuracy on tweets is typically around 0.80-0.85
+# Higher than NLTK (0.778) and VADER (0.65-0.70)
+# because it uses a deep learning transformer model
+#
+# FINAL COMPARISON (expected) :
+# NLTK + Logistic Regression : ~0.778
+# VADER (rule based)         : ~0.65 - 0.70
+# HuggingFace (transformer)  : ~0.80 - 0.85
+# ============================================================

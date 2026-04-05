@@ -1,0 +1,76 @@
+# ============================================================
+# VADER SENTIMENT ANALYSIS - Sentiment140 Dataset
+# ============================================================
+# VADER (Valence Aware Dictionary and sEntiment Reasoner)
+# - Rule based model , no training needed
+# - Built specifically for social media / tweets
+# - Returns: neg, neu, pos, compound score
+# - compound >= 0.05 => positive , compound <= -0.05 => negative
+# ============================================================
+
+# ---STEP 1 : Import Libraries---
+import pandas as pd
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
+from sklearn.metrics import accuracy_score
+nltk.download('vader_lexicon')
+
+# ---STEP 2 : Load Data--- (same dataset as NLTK model)
+column_names = ['target', 'id', 'date', 'flag', 'user', 'text']
+twitter_data = pd.read_csv(
+    r"C:\Users\LENOVO\Desktop\sentiment_analysis\sentiment140\training.1600000.processed.noemoticon.csv",
+    names=column_names,
+    encoding='ISO-8859-1'
+)
+print("! CSV file loaded !")
+print(twitter_data.shape)
+
+# ---STEP 3 : Convert target 4 => 1 (same as NLTK model)---
+twitter_data.replace({'target': {4: 1}}, inplace=True)
+
+# ---STEP 4 : Sample 10,000 tweets (5000 positive , 5000 negative)---
+# Same sample size as HuggingFace for fair comparison
+SAMPLE_SIZE = 5000
+df_negative = twitter_data[twitter_data['target'] == 0].sample(SAMPLE_SIZE, random_state=2)
+df_positive = twitter_data[twitter_data['target'] == 1].sample(SAMPLE_SIZE, random_state=2)
+twitter_data = pd.concat([df_negative, df_positive]).reset_index(drop=True)
+print(f"\nSampled {len(twitter_data)} tweets for VADER evaluation")
+print(twitter_data['target'].value_counts())
+
+# ---STEP 5 : Initialize VADER---
+# No training needed! VADER is a rule-based model
+# It already knows which words are positive/negative
+sia = SentimentIntensityAnalyzer()
+
+# ---STEP 5 : Predict Sentiment using VADER---
+# compound score : ranges from -1 (most negative) to +1 (most positive)
+# >= 0.05  => positive (1)
+# <= -0.05 => negative (0)
+# in between => neutral (we'll count as negative for binary classification)
+
+print("Running VADER on 10,000 tweets sample...")
+
+def vader_predict(text):
+    score = sia.polarity_scores(text)['compound']
+    return 1 if score >= 0.05 else 0
+
+twitter_data['vader_prediction'] = twitter_data['text'].apply(vader_predict)
+print("VADER predictions done!")
+
+# ---STEP 6 : Accuracy Score---
+# Note: VADER has no train/test split since it requires no training
+# We evaluate it directly on the full dataset
+vader_accuracy = accuracy_score(twitter_data['target'], twitter_data['vader_prediction'])
+print(f"\nVADER Accuracy Score on 10,000 tweet sample : {vader_accuracy:.4f}")
+
+# ---STEP 7 : Sample Predictions to verify---
+print("\n--- Sample Predictions ---")
+sample = twitter_data[['text', 'target', 'vader_prediction']].sample(10, random_state=2)
+print(sample.to_string())
+
+# ============================================================
+# EXPECTED RESULT :
+# VADER accuracy on tweets is typically around 0.65 - 0.70
+# Lower than NLTK (0.778) because VADER requires no training
+# but VADER was specifically designed for social media text
+# ============================================================

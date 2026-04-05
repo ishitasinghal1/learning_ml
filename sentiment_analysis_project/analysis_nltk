@@ -1,0 +1,96 @@
+#import libraries
+import numpy as np
+import pandas as pd
+import re
+from nltk.corpus import stopwords
+from nltk.stem.porter import PorterStemmer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+import nltk
+
+#---STEP 1 : Downloading stopwords - words that do no add much value to your text like 'we','you','our'---
+nltk.download('stopwords')
+print(stopwords.words('english'))
+
+#---STEP 2 : Data Processing---
+column_names = ['target', 'id', 'date', 'flag', 'user', 'text']
+twitter_data = pd.read_csv(r"C:\Users\LENOVO\Desktop\sentiment_analysis\sentiment140\training.1600000.processed.noemoticon.csv" , names = column_names ,encoding = 'ISO-8859-1')
+print("!Csv file loaded!")
+print(twitter_data.shape)
+print(twitter_data.head())
+
+#---Missing values---
+print(twitter_data.isnull().sum())
+#no missing values
+
+# checking the distribution of target column - target => 0 = negative , 2 = neutral , 4 = positive
+print(twitter_data['target'].value_counts())
+#--- Equally distributed data : 0 = 80000 , 4 = 80000 , no 2---
+
+#Convert "4" to "1"
+twitter_data.replace({'target':{4:1}} , inplace=True)
+print(twitter_data['target'].value_counts())
+#now 0=>negative tweet & 1=>positive tweet
+
+# ---Creating a small sample (5000 positive , 5000 negative)---
+sample_size = 5000
+df_negative = twitter_data[twitter_data['target'] == 0].sample(sample_size, random_state=2)
+df_positive = twitter_data[twitter_data['target'] == 1].sample(sample_size, random_state=2)
+twitter_data = pd.concat([df_negative, df_positive]).reset_index(drop=True)
+
+print(f"Sampled {len(twitter_data)} tweets")
+
+print(twitter_data['target'].value_counts())
+# should show : 0 => 5000 , 1 => 5000
+
+#---STEMMING - Process to reducing a word to its root words , like for actress , actor , acting = act---
+port_stem = PorterStemmer()
+def stemming(content):
+    stemmed_content = re.sub('[^a-zA-Z]',' ', content)
+    stemmed_content = stemmed_content.lower()
+    stemmed_content = stemmed_content.split()
+    stemmed_content = [port_stem.stem(word) for word in stemmed_content if not word in stopwords.words('english')]
+    stemmed_content = ' '.join(stemmed_content)
+
+    return stemmed_content
+
+twitter_data['stemmed_content'] = twitter_data['text'].apply(stemming) #--takes time to complete--
+print(twitter_data.head())
+
+#Seperating the data and label
+X = twitter_data['stemmed_content'].values.tolist()
+Y = twitter_data['target'].values.tolist()
+print(X)
+print(Y)
+
+#---STEP 3 : Splitting the data into training and testing data---
+#test size = 0.2 is 20% of total dataset will be testing data rest 80% is training data , stratifying for Y so that 0 & 1 are distributed equally for test and train data , random state = 2 (optional)
+X_train , X_test , Y_train , Y_test = train_test_split(X,Y,test_size=0.2, stratify=Y, random_state=2)
+print(len(X), len(X_train), len(X_test))
+print(len(Y), len(Y_train), len(Y_test))
+
+#---Converting textual data to numerical data , gets positive and negavtive value to individual words on the basis of its repetion---
+vectorizer = TfidfVectorizer()
+X_train = vectorizer.fit_transform(X_train)
+X_test = vectorizer.transform(X_test)
+
+print(X_train) #--1st column is the number of tweet as in 0 => 1st tweet , 1 => 2nd tweet
+print(X_test) 
+
+#--- STEP 4 : Train Machine learning model : Logistic Regression---
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train, Y_train)
+
+#---Model Evaluation : Accuracy score on the training data---
+X_train_prediction = model.predict(X_train)
+training_data_accuracy = accuracy_score(Y_train, X_train_prediction)
+print('Accuracy score in the training data :' , training_data_accuracy)
+
+#---Model Evaluation : Accuracy score on the testing data---
+X_test_prediction = model.predict(X_test)
+testing_data_accuracy = accuracy_score(Y_test, X_test_prediction)
+print('Accuracy score in the testing data :' , testing_data_accuracy)
+
+#---training data accuracy = 0.8102 & testing data accuracy = 0.778 => very close! Model is trained well!
