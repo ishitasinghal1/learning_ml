@@ -1,0 +1,117 @@
+import os
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_ollama import OllamaEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_ollama import OllamaLLM
+from langchain_core.prompts import PromptTemplate
+from langchain_classic.chains import RetrievalQA
+
+# -----------------------------
+# Config
+# -----------------------------
+DATA_PATH   = "rulebooks"
+CHROMA_DIR  = "./chroma_db"
+EMBED_MODEL = "mxbai-embed-large"
+LLM_MODEL   = "llama3"
+
+# -----------------------------
+# 1. Load PDFs
+# -----------------------------
+documents = []
+for file in os.listdir(DATA_PATH):
+    if file.endswith(".pdf"):
+        loader = PyPDFLoader(os.path.join(DATA_PATH, file))
+        documents.extend(loader.load())
+
+print(f"Loaded {len(documents)} pages")
+
+# -----------------------------
+# Embeddings model
+# -----------------------------
+embedding = OllamaEmbeddings(model=EMBED_MODEL)
+
+# -----------------------------
+# 2. Chunk + 3. Embed + Store
+#    (runs only on first launch)
+# -----------------------------
+if not os.path.exists(CHROMA_DIR):
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=150
+    )
+    chunks = splitter.split_documents(documents)
+    print(f"Created {len(chunks)} chunks")
+
+    vectorstore = Chroma.from_documents(
+        documents=chunks,
+        embedding=embedding,
+        persist_directory=CHROMA_DIR
+    )
+    print("Vector DB saved to disk")
+
+else:
+    print("Loading existing vector DB...")
+    vectorstore = Chroma(
+        persist_directory=CHROMA_DIR,
+        embedding_function=embedding
+    )
+
+# -----------------------------
+# 4. Retriever
+# k=5: retrieve 5 chunks per query.
+# Too low (k=2-3) -> may miss the answer.
+# Too high (k=10+) -> adds noise, confuses the LLM.
+# 5 is a good balance for rulebook-sized chunks.
+# -----------------------------
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+# -----------------------------
+# 5. LLM
+# -----------------------------
+llm = OllamaLLM(model=LLM_MODEL, temperature=0.1)
+
+# -----------------------------
+# 6. Prompt
+# "Reason from the rules" is the key instruction.
+# Without it: LLM sees "2-4 players" but won't infer "5 is not allowed".
+# With it: LLM reasons from the rule and gives a direct answer.
+# -----------------------------
+prompt = PromptTemplate(
+    input_variables=["context", "question"],
+    template="""You are a board game rules expert.
+Use the rulebook excerpts below to answer the question.
+Reason from the rules - if a rule implies the answer, state it clearly.
+
+{context}
+
+Question: {question}
+Answer:"""
+)
+
+# -----------------------------
+# 7. RAG chain
+# -----------------------------
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    retriever=retriever,
+    return_source_documents=True,
+    chain_type_kwargs={"prompt": prompt}
+)
+
+# -----------------------------
+# 8. Q&A loop
+# -----------------------------
+while True:
+    query = input("\nAsk a question (or 'exit'): ")
+
+    if query.lower() == "exit":
+        break
+
+    result = qa_chain.invoke({"query": query})
+
+    print("\nAnswer:", result["result"])
+
+    print("\nSources:")
+    for doc in result["source_documents"]:
+        print("-", doc.metadata.get("source"), "| page", doc.metadata.get("page"))
